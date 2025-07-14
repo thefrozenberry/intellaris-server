@@ -1,0 +1,382 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserType {
+  CUSTOMER
+  MERCHANT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum PaymentMode {
+  UPI
+  CARD
+  WALLET
+  NETBANKING
+  OTHER
+}
+
+enum DocumentType {
+  AADHAAR
+  PAN
+  PASSPORT
+  DRIVING_LICENSE
+  VOTER_ID
+  SELFIE
+  PROFILE_PHOTO
+  OTHER
+}
+
+model User {
+  id                      String                    @id @default(uuid())
+  customerId              String                    @unique // Format: CUS<number> or MER<number>
+  mobile                  String                    @unique
+  email                   String?                   @unique
+  name                    String?
+  userType                UserType                  @default(CUSTOMER)
+  dateOfBirth             DateTime?
+  gender                  Gender?
+  nationality             String?
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+  lastLoginAt             DateTime?
+  
+  // Relations
+  refreshTokens           RefreshToken[]
+  addresses               Address[]
+  documents               UserDocument[]
+  bankAccounts            BankAccount[]
+  vpa                     VirtualPaymentAddress[]
+  cards                   Card[]
+  deviceInfo              DeviceInfo[]
+  sessionLogs             SessionLog[]
+  transactions            Transaction[]              @relation("TransactionUser")
+  transactionsAsSender    Transaction[]              @relation("TransactionSender")
+  transactionsAsReceiver  Transaction[]              @relation("TransactionReceiver")
+  wallet                  Wallet?
+  kycDetails              KycDetails?
+  userPreferences         UserPreferences?
+  mandates                UpiMandate[]
+  gamificationTransactions GamificationTransaction[]
+  spendingAnalytics       SpendingAnalytics[]
+  referrals               Referral[]                @relation("UserReferrals")
+  referredBy              Referral?                 @relation("ReferredBy")
+
+  @@map("users")
+}
+
+model Address {
+  id                 String    @id @default(uuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addressType        String    // "RESIDENTIAL", "CURRENT", etc.
+  addressLine1       String
+  addressLine2       String?
+  city               String
+  state              String
+  postalCode         String
+  country            String
+  isDefault          Boolean   @default(false)
+  latitude           Float?
+  longitude          Float?
+  locationName       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("addresses")
+}
+
+model UserDocument {
+  id              String       @id @default(uuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentType    DocumentType
+  documentNumber  String?      // Encrypted
+  documentUrl     String?      // S3 URL for document scan
+  isVerified      Boolean      @default(false)
+  uploadedAt      DateTime     @default(now())
+  verifiedAt      DateTime?
+  
+  @@unique([userId, documentType])
+  @@map("user_documents")
+}
+
+model KycDetails {
+  id              String       @id @default(uuid())
+  userId          String       @unique
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kycStatus       KycStatus    @default(PENDING)
+  riskScore       Float?
+  isFraudFlagged  Boolean      @default(false)
+  verifiedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@map("kyc_details")
+}
+
+model BankAccount {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountNumber    String     // Encrypted
+  ifscCode         String
+  bankName         String
+  accountHolderName String
+  isVerified       Boolean    @default(false)
+  isPrimary        Boolean    @default(false)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  @@unique([userId, accountNumber])
+  @@map("bank_accounts")
+}
+
+model VirtualPaymentAddress {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vpa              String     @unique
+  bankAccountId    String?
+  isVerified       Boolean    @default(false)
+  isPrimary        Boolean    @default(false)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  @@map("virtual_payment_addresses")
+}
+
+model Card {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardType         String     // "DEBIT", "CREDIT"
+  cardNumber       String     // Encrypted, last 4 digits
+  expiryMonth      Int
+  expiryYear       Int
+  nameOnCard       String
+  bankName         String
+  isVerified       Boolean    @default(false)
+  isPrimary        Boolean    @default(false)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  @@map("cards")
+}
+
+model Wallet {
+  id               String     @id @default(uuid())
+  userId           String     @unique
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance          Decimal    @default(0)
+  currency         String     @default("INR")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  @@map("wallets")
+}
+
+model Transaction {
+  id                String             @id @default(uuid())
+  userId            String
+  user              User               @relation("TransactionUser", fields: [userId], references: [id])
+  senderId          String?
+  sender            User?              @relation("TransactionSender", fields: [senderId], references: [id])
+  receiverId        String?
+  receiver          User?              @relation("TransactionReceiver", fields: [receiverId], references: [id])
+  amount            Decimal
+  currency          String             @default("INR")
+  paymentMode       PaymentMode
+  status            TransactionStatus  @default(PENDING)
+  transactionType   String             // "DEBIT", "CREDIT", "REFUND", etc.
+  category          String?            // For spending analytics
+  description       String?
+  merchantName      String?
+  referenceId       String?            @unique
+  vpa               String?
+  utrNumber         String?            @unique
+  transactionDate   DateTime           @default(now())
+  completedAt       DateTime?
+  latitude          Float?
+  longitude         Float?
+  locationName      String?
+  gamificationTransaction GamificationTransaction?
+  
+  @@map("transactions")
+}
+
+model UpiMandate {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  umn              String     @unique // Unique Mandate Number
+  amount           Decimal
+  frequency        String     // "DAILY", "WEEKLY", "MONTHLY", etc.
+  startDate        DateTime
+  endDate          DateTime?
+  merchantName     String
+  merchantVpa      String
+  status           String     // "ACTIVE", "EXPIRED", "REVOKED", etc.
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  @@map("upi_mandates")
+}
+
+model DeviceInfo {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceType       String
+  deviceModel      String?
+  operatingSystem  String?
+  appVersion       String?
+  browserName      String?
+  deviceFingerprint String?
+  pushToken        String?
+  isActive         Boolean    @default(true)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  
+  @@map("device_info")
+}
+
+model SessionLog {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress        String
+  deviceInfoId     String?
+  sessionStart     DateTime   @default(now())
+  sessionEnd       DateTime?
+  activity         String?    // "LOGIN", "LOGOUT", "TRANSACTION", etc.
+  
+  @@map("session_logs")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  isActive  Boolean  @default(true)
+
+  @@map("refresh_tokens")
+}
+
+model UserPreferences {
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferredLanguage   String    @default("en")
+  notificationEnabled Boolean   @default(true)
+  emailNotifications  Boolean   @default(true)
+  smsNotifications    Boolean   @default(true)
+  pushNotifications   Boolean   @default(true)
+  isVip               Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  @@map("user_preferences")
+}
+
+model GamificationTransaction {
+  id             String     @id @default(uuid())
+  customerId     String
+  user           User       @relation(fields: [customerId], references: [id])
+  transactionId  String     @unique
+  transaction    Transaction @relation(fields: [transactionId], references: [id])
+  referenceId    String     @unique
+  amount         Decimal
+  paymentType    String
+  maxRushes      Int
+  pointsEarned   Int?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  gameCompletedAt DateTime?
+
+  @@map("gamification_transactions")
+}
+
+model SpendingAnalytics {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date           DateTime
+  category       String
+  totalAmount    Decimal
+  transactionCount Int
+  
+  @@unique([userId, date, category])
+  @@map("spending_analytics")
+}
+
+model CategoryBudget {
+  id             String    @id @default(uuid())
+  userId         String
+  category       String
+  budgetAmount   Decimal
+  period         String    // "WEEKLY", "MONTHLY"
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  @@unique([userId, category, period])
+  @@map("category_budgets")
+}
+
+model Referral {
+  id             String    @id @default(uuid())
+  referralCode   String    @unique
+  userId         String
+  user           User      @relation("UserReferrals", fields: [userId], references: [id], onDelete: Cascade)
+  referredUserId String?   @unique
+  referredUser   User?     @relation("ReferredBy", fields: [referredUserId], references: [id])
+  status         String    // "PENDING", "COMPLETED"
+  rewardAmount   Decimal?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  
+  @@map("referrals")
+}
+
+model ConsentLog {
+  id             String    @id @default(uuid())
+  userId         String
+  consentType    String    // "PRIVACY_POLICY", "TERMS", "DATA_SHARING", etc.
+  consentVersion String
+  ipAddress      String
+  userAgent      String
+  consentedAt    DateTime  @default(now())
+  
+  @@map("consent_logs")
+} 
